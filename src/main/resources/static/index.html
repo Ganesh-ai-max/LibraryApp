@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Library Manager</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#1a1d21;--muted:#6b7280;--accent:#2563eb;--line:#e5e7eb;--ok:#16a34a;--out:#dc2626;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1115;--card:#1a1d23;--text:#eef0f3;--muted:#9aa3af;--accent:#60a5fa;--line:#2b3038;--ok:#4ade80;--out:#f87171}}
+:root[data-theme="dark"]{--bg:#0f1115;--card:#1a1d23;--text:#eef0f3;--muted:#9aa3af;--accent:#60a5fa;--line:#2b3038;--ok:#4ade80;--out:#f87171}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:520px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:8px 0 4px}
+.mode{color:var(--muted);font-size:13px;margin-bottom:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px}
+input{width:100%;font:inherit;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text);margin-bottom:10px}
+.two{display:flex;gap:10px}
+button{font:inherit;border:0;border-radius:10px;padding:12px 16px;background:var(--accent);color:#fff;width:100%;font-weight:600}
+button.sm{width:auto;padding:6px 10px;font-size:14px}
+button.ghost{background:transparent;color:var(--muted);font-weight:400}
+.stats{display:flex;gap:10px;margin-bottom:14px}
+.stat{flex:1;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;text-align:center}
+.stat b{display:block;font-size:20px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0}
+.meta{color:var(--muted);font-size:14px}
+.tag{font-weight:600;font-size:13px}
+.tag.in{color:var(--ok)}.tag.out{color:var(--out)}
+.empty{color:var(--muted);text-align:center;padding:10px}
+</style>
+</head>
+<body>
+<main>
+<h1>Library Manager</h1>
+<div class="mode" id="mode"></div>
+<div class="stats">
+<div class="stat"><b id="sTotal">0</b>Total</div>
+<div class="stat"><b id="sIn">0</b>Available</div>
+<div class="stat"><b id="sOut">0</b>Borrowed</div>
+</div>
+<div class="card">
+<input id="title" placeholder="Book title" autocomplete="off">
+<div class="two">
+<input id="author" placeholder="Author" autocomplete="off">
+<input id="year" type="number" inputmode="numeric" placeholder="Year">
+</div>
+<button id="add">Add book</button>
+</div>
+<div class="card">
+<input id="search" placeholder="Search title or author">
+<div id="list"></div>
+</div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let mode="api",local=[];
+try{local=JSON.parse(localStorage.getItem("books")||"[]")}catch(e){local=[]}
+function saveLocal(){try{localStorage.setItem("books",JSON.stringify(local))}catch(e){}}
+
+async function call(path,opts){
+  const r=await fetch(path,opts);
+  if(!r.ok||!(r.headers.get("content-type")||"").includes("json")&&r.status!==204)throw new Error("no api");
+  return r.status===204?null:r.json();
+}
+async function load(q){
+  try{
+    const data=await call("/api/books"+(q?"?q="+encodeURIComponent(q):""));
+    mode="api";return data;
+  }catch(e){
+    mode="local";
+    const s=(q||"").toLowerCase();
+    return local.filter(b=>!s||b.title.toLowerCase().includes(s)||b.author.toLowerCase().includes(s));
+  }
+}
+async function render(){
+  const books=await load($("search").value.trim());
+  $("mode").textContent=mode==="api"?"Connected to Java server (Spring Boot + H2 database)":"Demo mode: data saved on this device";
+  const list=$("list");list.innerHTML="";
+  if(!books.length)list.innerHTML='<div class="empty">No books found</div>';
+  books.forEach(b=>{
+    const row=document.createElement("div");row.className="row";
+    const left=document.createElement("div");
+    left.innerHTML='<div></div><div class="meta"></div>';
+    left.firstChild.textContent=b.title;
+    left.lastChild.textContent=b.author+(b.year?" · "+b.year:"");
+    const right=document.createElement("div");
+    const tag=document.createElement("span");
+    tag.className="tag "+(b.available?"in":"out");
+    tag.textContent=b.available?"Available":"Borrowed";
+    const t=document.createElement("button");t.className="sm";t.textContent=b.available?"Borrow":"Return";
+    t.onclick=()=>act("toggle",b.id);
+    const d=document.createElement("button");d.className="sm ghost";d.textContent="✕";
+    d.onclick=()=>act("delete",b.id);
+    right.append(tag," ",t,d);
+    row.append(left,right);list.appendChild(row);
+  });
+  const all=mode==="api"?await load(""):local;
+  const inCount=all.filter(b=>b.available).length;
+  $("sTotal").textContent=all.length;$("sIn").textContent=inCount;$("sOut").textContent=all.length-inCount;
+}
+async function act(type,id){
+  if(mode==="api"){
+    try{
+      if(type==="toggle")await call("/api/books/"+id+"/toggle",{method:"PUT"});
+      else await call("/api/books/"+id,{method:"DELETE"});
+    }catch(e){}
+  }else{
+    if(type==="toggle"){const b=local.find(x=>x.id===id);if(b)b.available=!b.available}
+    else local=local.filter(x=>x.id!==id);
+    saveLocal();
+  }
+  render();
+}
+$("add").onclick=async()=>{
+  const title=$("title").value.trim(),author=$("author").value.trim(),year=parseInt($("year").value,10)||0;
+  if(!title||!author){alert("Enter a title and an author.");return}
+  const book={title,author,year};
+  if(mode==="api"){
+    try{await call("/api/books",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(book)})}catch(e){}
+  }else{
+    local.push({id:Date.now(),title,author,year,available:true});saveLocal();
+  }
+  $("title").value="";$("author").value="";$("year").value="";
+  render();
+};
+$("search").oninput=render;
+render();
+</script>
+</body>
+</html>
